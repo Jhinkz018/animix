@@ -1,6 +1,10 @@
 ---
 
 <p align="center">
+  <strong>Boost your productivity with Animix Bot – your friendly automation tool that handles key tasks with ease!</strong>
+</p>
+
+<p align="center">
   <a href="https://github.com/Jhinkz018/animix">
     <img src="https://img.shields.io/badge/build-passed-brightgreen" alt="Build Status" />
   </a>

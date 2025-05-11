@@ -1,19 +1,14 @@
 ---
 
-<h1 align="center">Animix Bot</h1>
-
 <p align="center">
-  <strong>Boost your productivity with Animix Bot – your friendly automation tool that handles key tasks with ease!</strong>
-</p>
-
-<p align="center" style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
-  <a href="https://github.com/Jhinkz018/animix" style="display: inline-block;">
+  <a href="https://github.com/Jhinkz018/animix">
     <img src="https://img.shields.io/badge/build-passed-brightgreen" alt="Build Status" />
   </a>
-  <a href="https://discord.gg/WfgGg8n9" style="display: inline-block;">
+  <a href="https://discord.gg/WfgGg8n9">
     <img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&style=flat" alt="Discord Server" />
   </a>
 </p>
+
 
 ---
 

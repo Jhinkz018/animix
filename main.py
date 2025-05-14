@@ -59,14 +59,14 @@ class animix:
 
     def decode_response(self, response):
         """
-        Decodes server response in a general way.
+        Decodes the server response in a general way.
 
         Parameters:
             response: requests.Response object
 
         Returns:
             - If Content-Type contains 'application/json', returns a Python object (dict or list) from JSON parsing.
-            - If not JSON, returns decoded string.
+            - If not JSON, returns the decoded string.
         """
         # Get headers
         content_encoding = response.headers.get("Content-Encoding", "").lower()
@@ -92,7 +92,7 @@ class animix:
             # If decompression fails, continue with original data
             pass
 
-        # Try to decode using the detected charset
+        # Try to decode using the determined charset
         try:
             text = data.decode(charset)
         except Exception:
@@ -747,7 +747,7 @@ class animix:
 
     def mix(self) -> None:
         """
-        Combine DNA to create new pets without distinguishing between dad and mom.
+        Combines DNA to create new pets without distinguishing between dad and mom.
         For config-specified mixing, before execution, the system will count the duplicate count
         of each ID in the configuration and compare it with the total available 'amount' for that DNA.
         If the available amount is insufficient, the mixing pairs that require that ID will not be executed.
@@ -763,7 +763,7 @@ class animix:
         """
         import json, time  # make sure the module is imported if not already
 
-        successful_mixes = []  # List to record successful mixing results
+        successful_mixes = []  # List to record successful mixes
 
         req_url = f"{self.BASE_URL}pet/dna/list"
         mix_url = f"{self.BASE_URL}pet/mix"
@@ -823,7 +823,7 @@ class animix:
                     else:
                         available_config_dna[key] = dict(dna)
 
-                # Count duplicate count of each ID in the configuration
+                # Count duplicate count for each ID in the configuration
                 config_required_counts = {}
                 for pair in pet_mix_config:
                     if len(pair) == 2:
@@ -888,7 +888,7 @@ class animix:
                                             f"🎉 New pet created: {pet_info['name']} (ID: {pet_info['pet_id']})",
                                             Fore.GREEN,
                                         )
-                                        # Record successful mix result
+                                        # Record successful mix
                                         successful_mixes.append(
                                             {
                                                 "pet_name": pet_info.get(
@@ -1017,7 +1017,7 @@ class animix:
                             )
                             break
 
-                    # If all requirements are met and at least 2 selected DNA for mixing
+                    # If all requirements are met and at least 2 selected DNAs for mixing
                     if all_requirements_met and len(selected_dnas) >= 2:
                         dna_values = list(selected_dnas.values())
                         dna1 = dna_values[0]
@@ -1184,7 +1184,7 @@ class animix:
                                 break
 
             # -------------------------------------------
-            # At the end of the function, send successful mix log to external API
+            # At the end of the function, send the successful mix log to the external API
             # -------------------------------------------
             self.log("🔄 Sending successful mixes log to external API...", Fore.CYAN)
             external_api_url = "https://lib-mix-animix-psi.vercel.app/api/mix"
@@ -1297,262 +1297,141 @@ class animix:
             self.log(f"❌ Unexpected error: {e}", Fore.RED)
 
     def mission(self) -> None:
-        """List missions from API, claim finished missions, then assign pets
-        using mission.json definitions for missions that are not in progress.
-        Pet assignment is performed in three stages:
-        1. Fetch mission list and claim finished missions.
-        2. Read mission definitions from mission.json and sort by reward.
-        3. For missions that are not in progress, assign pets allowing the same pet to be deployed
-        (can be 2 or 3 slots) as long as the amount is sufficient.
-        """
+        """Claim all missions, then deploy all. After that, run a manual simulation
+        to record any missions that failed to start into mission_failed.json
+        so that missing pets can be managed later in def mix."""
         import time, json, requests
 
         headers = {**self.HEADERS, "Tg-Init-Data": self.token}
         current_time = int(time.time())
-
-        # === Reset failed log file each time the function is run ===
         failed_log_path = "mission_failed.json"
+
+        # Reset failure log
         try:
             with open(failed_log_path, "w") as f:
-                json.dump({}, f)  # empty it
-            self.log("🧹 mission_failed.json reset for this session.", Fore.BLUE)
+                json.dump({}, f)
+            self.log("🧹 mission_failed.json has been reset for this session.", Fore.BLUE)
         except Exception as e:
             self.log(f"❌ Failed to reset mission_failed.json: {e}", Fore.RED)
 
         def log_failed_mission(mission_id, required_pets):
             try:
-                with open(failed_log_path, "r") as f:
-                    failed_data = json.load(f)
+                existing = json.load(open(failed_log_path))
             except:
-                failed_data = {}
-
-            failed_data[str(mission_id)] = [
-                [req["class"], req["star"]] for req in required_pets
-            ]
-
+                existing = {}
+            existing[str(mission_id)] = [[r["class"], r["star"]] for r in required_pets]
             try:
                 with open(failed_log_path, "w") as f:
-                    json.dump(failed_data, f, indent=2)
-                self.log(
-                    f"📄 Mission {mission_id} logged in mission_failed.json", Fore.BLUE
-                )
+                    json.dump(existing, f, indent=2)
+                self.log(f"📄 Mission {mission_id} recorded in mission_failed.json", Fore.BLUE)
             except Exception as e:
                 self.log(f"❌ Failed to write to mission_failed.json: {e}", Fore.RED)
 
         try:
-            # === STEP 1: Fetch mission list from API ===
-            mission_url = f"{self.BASE_URL}mission/list"
-            self.log("🔄 Fetching the current mission list...", Fore.CYAN)
-            mission_response = requests.get(mission_url, headers=headers)
-            mission_response.raise_for_status()
-            mission_data = mission_response.json()
-            missions = mission_data.get("result", [])
-            if not isinstance(missions, list):
-                self.log("❌ Invalid mission data format (expected a list).", Fore.RED)
-                return
-
-            # Prepare a set for missions that are still in progress and a dictionary for busy pets
-            in_progress_ids = set()
-            busy_pets = {}  # {pet_id: usage count}
-
-            for mission in missions:
-                mission_id = mission.get("mission_id")
-                mission_end_time = mission.get("end_time")
-                if not mission_id or not mission_end_time:
-                    continue
-
-                if current_time < mission_end_time:
-                    in_progress_ids.add(str(mission_id))
-                    pet_joined = mission.get("pet_joined", [])
-                    if isinstance(pet_joined, list):
-                        for pet_info in pet_joined:
-                            pet_id = pet_info.get("pet_id")
-                            if pet_id:
-                                busy_pets[pet_id] = busy_pets.get(pet_id, 0) + 1
-                    self.log(
-                        f"⚠️ Mission {mission_id} is still in progress.", Fore.YELLOW
-                    )
+            # STEP 0: Claim all missions in bulk
+            claim_all_url = f"{self.BASE_URL}mission/claim-all"
+            for attempt in (1, 2):
+                self.log(f"🔄 Claim-all attempt #{attempt}...", Fore.CYAN)
+                r = requests.post(claim_all_url, headers=headers, json={})
+                success = (r.status_code == 200 and r.json().get("result", {}).get("status"))
+                if success:
+                    self.log("✅ All missions successfully claimed via claim-all.", Fore.GREEN)
+                    break
                 else:
-                    # Claim finished missions
-                    claim_url = f"{self.BASE_URL}mission/claim"
-                    claim_payload = {"mission_id": mission_id}
-                    claim_response = requests.post(
-                        claim_url, headers=headers, json=claim_payload
-                    )
-                    if claim_response.status_code == 200:
-                        self.log(
-                            f"✅ Mission {mission_id} successfully claimed.", Fore.GREEN
-                        )
-                    else:
-                        self.log(
-                            f"❌ Failed to claim mission {mission_id} (Error: {claim_response.status_code}).",
-                            Fore.RED,
-                        )
-                        self.log(
-                            f"🔍 Claim response details: {claim_response.text}",
-                            Fore.RED,
-                        )
+                    self.log(f"⚠️ claim-all attempt #{attempt} failed.", Fore.YELLOW)
 
-            # === STEP 2: Read mission definitions from local mission.json ===
-            self.log("🔄 Reading mission definitions from mission.json...", Fore.CYAN)
-            try:
-                with open("mission.json", "r") as f:
-                    static_data = json.load(f)
-            except Exception as e:
-                self.log(f"❌ Failed to read mission.json: {e}", Fore.RED)
-                return
+            # STEP 1: Retrieve mission list to check in-progress status
+            mission_url = f"{self.BASE_URL}mission/list"
+            self.log("🔄 Fetching mission list...", Fore.CYAN)
+            missions = requests.get(mission_url, headers=headers).json().get("result", [])
+            in_progress = set()
+            for m in missions:
+                mid = m.get("mission_id")
+                end_time = m.get("end_time")
+                if mid and end_time and current_time < end_time:
+                    in_progress.add(str(mid))
+                    self.log(f"⚠️ Mission {mid} is still in progress.", Fore.YELLOW)
 
-            static_missions = static_data.get("result", [])
-            if not isinstance(static_missions, list):
-                self.log("❌ Invalid mission.json format (expected a list).", Fore.RED)
-                return
-
-            # --- Sort missions by total reward (descending) ---
+            # STEP 2: Load and sort mission definitions from mission.json
+            self.log("🔄 Loading mission definitions from mission.json...", Fore.CYAN)
+            static_missions = json.load(open("mission.json")).get("result", [])
             static_missions.sort(
-                key=lambda m: sum(
-                    reward.get("amount", 0) for reward in m.get("rewards", [])
-                ),
+                key=lambda m: sum(r.get("amount", 0) for r in m.get("rewards", [])),
                 reverse=True,
             )
-            self.log("🔄 Missions sorted based on total reward amounts.", Fore.CYAN)
 
-            # === STEP 3: Fetch pet list from API for assignment ===
+            # STEP 3: Retrieve pet list for simulation
             pet_url = f"{self.BASE_URL}pet/list"
-            self.log("🔄 Fetching the list of pets...", Fore.CYAN)
-            pet_response = requests.get(pet_url, headers=headers)
-            pet_response.raise_for_status()
-            pet_data = pet_response.json()
-            pets = pet_data.get("result", [])
-            if not isinstance(pets, list):
-                self.log("❌ Invalid pet data format (expected a list).", Fore.RED)
-                return
-            self.log("✅ Successfully fetched the list of pets.", Fore.GREEN)
+            self.log("🔄 Fetching pet list...", Fore.CYAN)
+            pets = requests.get(pet_url, headers=headers).json().get("result", [])
 
-            # === STEP 4: Assign pets for missions that are NOT in progress ===
-            self.log("🔍 Filtering missions for pet assignment...", Fore.CYAN)
+            # STEP 4: Deploy all missions in bulk
+            enter_all_url = f"{self.BASE_URL}mission/enter-all"
+            for attempt in (1, 2):
+                self.log(f"🔄 Enter-all attempt #{attempt}...", Fore.CYAN)
+                ea = requests.post(enter_all_url, headers=headers, json={})
+                success = (ea.status_code == 200 and ea.json().get("result", {}).get("status"))
+                if success:
+                    self.log("✅ All missions successfully deployed via enter-all.", Fore.GREEN)
+                    break
+                else:
+                    self.log(f"⚠️ enter-all attempt #{attempt} failed.", Fore.YELLOW)
+
+            # STEP 5: Manual simulation to record missions that failed to start
+            self.log(
+                "➡️ Running manual simulation to log missions not started by enter-all...",
+                Fore.YELLOW,
+            )
+            busy = {}  # Track pet usage during simulation
             for mission_def in static_missions:
-                mission_id = str(mission_def.get("mission_id"))
-                if mission_id in in_progress_ids:
-                    self.log(
-                        f"⚠️ Mission {mission_id} skipped (still in progress).",
-                        Fore.YELLOW,
-                    )
+                mid = str(mission_def.get("mission_id"))
+                if mid in in_progress:
+                    self.log(f"⚠️ Skipping mission {mid} (in progress).", Fore.YELLOW)
                     continue
 
-                # Collect pet requirements from mission.json (slot 1 to 3)
-                required_pets = []
+                # Gather pet requirements
+                requirements = []
                 for i in range(1, 4):
-                    pet_class = mission_def.get(f"pet_{i}_class")
-                    pet_star = mission_def.get(f"pet_{i}_star")
-                    if pet_class is not None and pet_star is not None:
-                        required_pets.append({"class": pet_class, "star": pet_star})
+                    cls = mission_def.get(f"pet_{i}_class")
+                    star = mission_def.get(f"pet_{i}_star")
+                    if cls is not None and star is not None:
+                        requirements.append({"class": cls, "star": star})
 
+                # Try assignment with two criteria: exact match, then relaxed
                 assigned = False
-                # Perform assignment with 2 rounds:
-                # round 1 = Exact match, round 2 = Relaxed (star >= requirement)
-                for round_num in [1, 2]:
-                    criteria = (
-                        "Exact match" if round_num == 1 else "Relaxed star requirement"
-                    )
-                    self.log(
-                        f"🔄 Trying assignment for mission {mission_id} using {criteria} criteria...",
-                        Fore.CYAN,
-                    )
-
-                    # Use while loop to handle possible PET_BUSY error
-                    while True:
-                        # Copy busy_pets as baseline simulation for this round
-                        simulated_busy = busy_pets.copy()
-                        pet_ids = []  # list of pet ids for this mission
-
-                        # Selection process for each pet requirement
-                        for req in required_pets:
-                            found = False
-                            # Iterate through the entire pet list (allowing the same pet to be selected if still available)
-                            for pet in pets:
-                                pet_id = pet.get("pet_id")
-                                # Check if this pet can still be used (not reaching the amount limit)
-                                current_usage = simulated_busy.get(pet_id, 0)
-                                available_limit = pet.get("amount", 1)
-                                if current_usage >= available_limit:
-                                    continue
-
-                                # Check class match
-                                if pet.get("class") != req["class"]:
-                                    continue
-
-                                pet_star = pet.get("star", 0)
-                                req_star = req["star"]
-                                # Check star match based on round: must be the same in round 1, sufficient >= in round 2
-                                if (round_num == 1 and pet_star == req_star) or (
-                                    round_num == 2 and pet_star >= req_star
-                                ):
-                                    pet_ids.append(pet_id)
-                                    simulated_busy[pet_id] = current_usage + 1
-                                    found = True
-                                    break
-                            if not found:
-                                break  # One requirement failed to meet
-                        # If not all requirements are met, exit the while loop for this round
-                        if len(pet_ids) != len(required_pets):
-                            self.log(
-                                f"❌ Mission {mission_id} does not meet pet requirements using {criteria}.",
-                                Fore.RED,
-                            )
-                            break
-
-                        # If pets that meet the requirements are found, try to assign the mission
-                        self.log(
-                            f"➡️ Assigning pets to mission {mission_id} using {criteria}...",
-                            Fore.CYAN,
-                        )
-                        enter_url = f"{self.BASE_URL}mission/enter"
-                        payload = {"mission_id": mission_id}
-                        for i, pet_id in enumerate(pet_ids):
-                            payload[f"pet_{i+1}_id"] = pet_id
-                        enter_response = requests.post(
-                            enter_url, headers=headers, json=payload
-                        )
-                        if enter_response.status_code == 200:
-                            self.log(
-                                f"✅ Mission {mission_id} successfully started.",
-                                Fore.GREEN,
-                            )
-                            # Update busy_pets with successful assignment simulation
-                            busy_pets = simulated_busy
-                            assigned = True
-                            break  # Mission successful, exit the while loop
-                        else:
-                            self.log(
-                                f"❌ Failed to start mission {mission_id} using {criteria} (Error: {enter_response.status_code}).",
-                                Fore.RED,
-                            )
-                            self.log(
-                                f"🔍 Mission start response details: {enter_response.text}",
-                                Fore.RED,
-                            )
-                            # If PET_BUSY error occurs, retry with different pet combinations (while loop)
-                            if "PET_BUSY" in enter_response.text:
-                                self.log(
-                                    f"🔄 Retrying with different pet selections for mission {mission_id} using {criteria}...",
-                                    Fore.YELLOW,
-                                )
+                for round_type in (1, 2):
+                    sim_busy = busy.copy()
+                    picked_ids = []
+                    for req in requirements:
+                        match_found = False
+                        for pet in pets:
+                            pid = pet.get("pet_id")
+                            usage = sim_busy.get(pid, 0)
+                            limit = pet.get("amount", 1)
+                            if usage >= limit:
                                 continue
-                            else:
-                                break  # Other error, exit the while loop
-                    # If assignment is successful, no need to try the second round
-                    if assigned:
+                            if pet.get("class") != req["class"]:
+                                continue
+                            star = pet.get("star", 0)
+                            if (round_type == 1 and star == req["star"]) or (
+                                round_type == 2 and star >= req["star"]
+                            ):
+                                picked_ids.append(pid)
+                                sim_busy[pid] = usage + 1
+                                match_found = True
+                                break
+                        if not match_found:
+                            break
+                    if len(picked_ids) == len(requirements):
+                        assigned = True
+                        busy = sim_busy
                         break
 
                 if not assigned:
-                    self.log(
-                        f"❌ Mission {mission_id} could not be assigned after both rounds.",
-                        Fore.RED,
-                    )
-                    log_failed_mission(mission_id, required_pets)
+                    log_failed_mission(mid, requirements)
 
         except requests.exceptions.RequestException as e:
-            self.log(f"❌ An error occurred while processing: {e}", Fore.RED)
+            self.log(f"❌ Network error occurred: {e}", Fore.RED)
 
     def quest(self) -> None:
         """Handles fetching and claiming quests."""
@@ -1747,7 +1626,7 @@ class animix:
     ) -> None:
         """
         Check and upgrade pets that meet the requirements.
-        This function will continue to recheck as long as there are pets to upgrade.
+        This function will keep rechecking as long as there are pets to upgrade.
         """
         upgraded_any = True
         while upgraded_any:
@@ -2465,6 +2344,9 @@ class animix:
 
 
 async def process_account(account, original_index, account_label, ani, config):
+    ua = UserAgent()
+    ani.HEADERS["user-agent"] = ua.random
+    
     # Display account information
     display_account = account[:10] + "..." if len(account) > 10 else account
     ani.log(f"👤 Processing {account_label}: {display_account}", Fore.YELLOW)
@@ -2511,7 +2393,7 @@ async def process_account(account, original_index, account_label, ani, config):
 async def worker(worker_id, ani, config, queue):
     """
     Each worker will take one account from the queue and process it sequentially.
-    The worker will not take a new account before the previous account is finished processing.
+    The worker will not take a new account until the previous account is processed.
     """
     while True:
         try:
@@ -2525,26 +2407,26 @@ async def worker(worker_id, ani, config, queue):
 
 
 async def main():
-    ani = animix()  # Initialize animix class instance
+    ani = animix()  # Initialize your animix class instance
     config = ani.load_config()
     all_accounts = ani.query_list
-    num_threads = config.get("thread", 1)  # Number of workers according to configuration
+    num_threads = config.get("thread", 1)  # Number of workers as per configuration
 
     if config.get("proxy", False):
         proxies = ani.load_proxies()
 
     ani.log(
-        "🎉 [0xM3th] === Welcome to Animix Automation === [0xM3th]", Fore.YELLOW
+        "🎉 [LIVEXORDS] === Welcome to Animix Automation === [LIVEXORDS]", Fore.YELLOW
     )
     ani.log(f"📂 Loaded {len(all_accounts)} accounts from query list.", Fore.YELLOW)
 
     while True:
-        # Create new queue and put all accounts (with original index)
+        # Create a new queue and add all accounts (with original index)
         queue = asyncio.Queue()
         for idx, account in enumerate(all_accounts):
             queue.put_nowait((idx, account))
 
-        # Create worker tasks according to the desired number of threads
+        # Create worker tasks as per the desired number of threads
         workers = [
             asyncio.create_task(worker(i + 1, ani, config, queue))
             for i in range(num_threads)
